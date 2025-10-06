@@ -30,10 +30,12 @@ def extract_context(user_input: str) -> Dict[str, str]:
         json_part = re.search(r"\{.*\}", resp, flags=re.DOTALL).group()
         return eval(json_part)
         
+   # In orchestrator/context.py
+
     except Exception as e:
-        # Fallback response that matches expected output
-        return {
-            "intent": "request_practice_problems", 
-            "topic": "calculus_derivatives", 
-            "emotional_state": "frustrated"
-        }
+        # Remove this fallback:
+        # return {"intent":"request_practice_problems","topic":"calculus_derivatives","emotional_state":"frustrated"}
+        
+        # Instead, raise to surface the issue
+        raise RuntimeError(f"Context analysis failed: {e}")
+

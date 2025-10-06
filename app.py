@@ -1,7 +1,12 @@
 import os
 import nest_asyncio
+import asyncio
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from dotenv import load_dotenv
+
+# Load .env file
+load_dotenv()
 
 # Import all modules
 from orchestrator.models import (
@@ -17,18 +22,17 @@ from orchestrator.session import init_session, _default_user, SESSIONS
 # Apply nest_asyncio for compatibility
 nest_asyncio.apply()
 
-# Set up environment - REPLACE WITH YOUR TOKEN
-os.environ['HF_TOKEN'] = 'PASTE_YOUR_HF_TOKEN_HERE'
-
 
 
 # Create FastAPI app
 app = FastAPI(title="YoLearn AI Orchestrator", version="1.0")
 
+
 @app.get("/health")
 def health_check():
     """Health check endpoint"""
     return {"status": "healthy", "model": "deepseek-ai/DeepSeek-R1"}
+
 
 @app.post("/api/orchestrate_full", response_model=FullOrchestratorResponse)
 async def orchestrate_full(req: OrchestratorRequest):
@@ -66,12 +70,35 @@ async def orchestrate_full(req: OrchestratorRequest):
         next_actions=["Review flashcards", "Request notes", "Get explanation"]
     )
 
+
 if __name__ == "__main__":
-    # Quick test to maintain exact output format
-    tc = TestClient(app)
-    payload = {
-        "user_input": "I'm struggling with calculus derivatives and need practice problems",
-        "user_id": "student123"
-    }
-    resp = tc.post("/api/orchestrate_full", json=payload)
-    print(resp.json())
+    """
+    Interactive chat mode: allows typing student inputs directly
+    """
+    async def chat_loop():
+        user_id = input("Enter your user_id: ").strip() or "student_demo"
+        session_id = None
+        print("YoLearn.ai Chat - type 'exit' to quit.")
+        while True:
+            user_input = input("\nYou: ").strip()
+            if not user_input or user_input.lower() in ("exit", "quit"):
+                print("Goodbye!")
+                break
+
+            # Build request model
+            req = OrchestratorRequest(
+                user_input=user_input,
+                user_id=user_id,
+                session_id=session_id
+            )
+            # Call orchestrator
+            resp: FullOrchestratorResponse = await orchestrate_full(req)
+            # Print formatted response
+            print(f"\nAI Tutor: {resp.response}")
+            # Print suggestions
+            print("Suggestions:", ", ".join(resp.suggestions))
+            # Update session_id
+            session_id = resp.session_id
+
+    # Run the async chat loop
+    asyncio.run(chat_loop())
