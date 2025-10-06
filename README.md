@@ -174,8 +174,6 @@ Contributions are welcome:
 - Add tests and documentation
 - Open a pull request
 
-***
-
 
 ***
 
