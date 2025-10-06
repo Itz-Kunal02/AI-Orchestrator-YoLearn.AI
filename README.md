@@ -184,4 +184,3 @@ Contributions are welcome:
 
 ***
 
-For queries, partnerships, or demo requests, please open an issue or contact the maintainers.
