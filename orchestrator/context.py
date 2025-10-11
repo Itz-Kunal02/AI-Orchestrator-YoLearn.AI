@@ -1,128 +1,109 @@
 # orchestrator/context.py
 
-"""
-Robust context extraction with preprocessing for spelling correction and verb stripping.
-Uses DeepSeek-R1 or falls back gracefully.
-"""
-
 import os
-import re
 import json
+import re
 from typing import Dict
 from openai import OpenAI
 
-# Simple common misspelling corrections dictionary
-MISSPELLINGS = {
-    "expalin": "explain",
-    "dificult": "difficult",
-    "quize": "quiz",
-    "praktice": "practice",
-    # add more as needed
-}
-
-# Verbs to strip from topic after intent extraction
-VERBS_TO_REMOVE_FROM_TOPIC = [
-    "explain",
-    "describe",
-    "tell",
-    "show",
-    "give",
-    "please",
-    "can you",
-    "could you",
-    "would you",
-    "i want",
-    "i need",
-    "help with",
-]
-
-def preprocess_input(user_input: str) -> str:
-    text = user_input.lower()
+def extract_last_json(text: str) -> Dict[str, str]:
+    """Extract the last valid JSON object from text."""
+    patterns = [
+        r'\{[^{}]*"intent"[^{}]*"topic"[^{}]*"emotional_state"[^{}]*\}',
+        r'\{[^{}]*"intent"[^{}]*\}',
+        r'\{.*?"intent".*?\}',
+    ]
     
-    # Correct common misspellings
-    for wrong, right in MISSPELLINGS.items():
-        text = re.sub(rf"\b{re.escape(wrong)}\b", right, text)
+    for pattern in patterns:
+        matches = re.findall(pattern, text, re.DOTALL)
+        for match in reversed(matches):
+            try:
+                parsed = json.loads(match)
+                if all(k in parsed for k in ("intent", "topic", "emotional_state")):
+                    return parsed
+            except:
+                continue
     
-    return text
+    raise ValueError("No valid JSON found")
 
-def strip_verbs(topic: str) -> str:
-    original = topic
-    for verb in VERBS_TO_REMOVE_FROM_TOPIC:
-        pattern = rf"^{re.escape(verb)}\s*"
-        topic = re.sub(pattern, "", topic)
-    return topic.strip()
+def manual_extraction(user_input: str) -> Dict[str, str]:
+    """Manual extraction as final fallback when LLM fails."""
+    ui = user_input.lower()
+    
+    # Determine intent
+    if any(word in ui for word in ["practice", "problems", "quiz", "test", "exercise", "advanced problems"]):
+        intent = "request_practice_problems"
+    elif any(word in ui for word in ["notes", "summary", "summarize"]):
+        intent = "notes"
+    else:
+        intent = "explanation"
+    
+    # Enhanced topic detection
+    topic = "general"
+    topics = {
+        "calculus": ["calculus", "derivative", "derivatives", "integral", "limit"],
+        "photosynthesis": ["photosynthesis", "photosyn"],
+        "quantum_mechanics": ["quantum", "quantum mechanics", "mechanics"],
+        "biology": ["biology", "bio"],
+        "chemistry": ["chemistry", "chem"],
+        "physics": ["physics", "phys"],
+        "math": ["math", "mathematics"],
+        "algebra": ["algebra"],
+        "geometry": ["geometry"],
+    }
+    
+    for topic_name, keywords in topics.items():
+        if any(keyword in ui for keyword in keywords):
+            topic = topic_name
+            break
+    
+    # Determine emotional state
+    emotional_state = "neutral"
+    if any(word in ui for word in ["struggling", "confused", "hard", "difficult", "help"]):
+        emotional_state = "frustrated"
+    elif any(word in ui for word in ["confident", "easy", "understand", "know", "well"]):
+        emotional_state = "confident"
+    
+    return {"intent": intent, "topic": topic, "emotional_state": emotional_state}
 
 def extract_context(user_input: str) -> Dict[str, str]:
-    """Extract context with LLM and robust fallback."""
-    clean_input = preprocess_input(user_input)
-
-    prompt = (
-        "You are an educational AI assistant. "
-        "Extract and return a JSON object with keys: intent, topic, emotional_state. "
-        "Ensure 'topic' is the main subject (multi-word topics using underscores). "
-        "Respond ONLY with valid JSON."
-    )
-
+    """Extract context with LLM first, then manual fallback."""
     hf_token = os.environ.get("HF_TOKEN")
+    
     if hf_token:
         try:
             client = OpenAI(base_url="https://router.huggingface.co/v1", api_key=hf_token)
-            completion = client.chat.completions.create(
+            
+            simple_prompt = f"""
+Extract from: "{user_input}"
+
+Return only this JSON format:
+{{"intent":"explanation","topic":"calculus","emotional_state":"neutral"}}
+
+Intent options: explanation, notes, request_practice_problems
+Topic: main subject (fix spelling)
+Emotional state: neutral, frustrated, confident, anxious
+"""
+            
+            response = client.chat.completions.create(
                 model="deepseek-ai/DeepSeek-R1",
                 messages=[
-                    {"role": "system", "content": prompt},
-                    {"role": "user", "content": clean_input}
+                    {"role": "system", "content": "Output only JSON. No other text."},
+                    {"role": "user", "content": simple_prompt}
                 ],
-                temperature=0.7,
-                max_tokens=150
+                temperature=0,
+                max_tokens=100,
             )
-            resp = completion.choices[0].message.content.strip()
-            match = re.search(r"\{.*\}", resp, flags=re.DOTALL)
-            if match:
-                context = json.loads(match.group())
-                # Validate presence of keys and their types
-                for key in ("intent", "topic", "emotional_state"):
-                    if key not in context or not isinstance(context[key], str):
-                        raise ValueError(f"Missing or invalid key '{key}' in LLM response")
-                # Clean topic
-                context["topic"] = strip_verbs(context["topic"].replace(" ", "_"))
-                return context
-
-        except Exception:
-            pass  # Fall through to fallback
-
-    # Fallback
-    ui = clean_input
-
-    # Intent
-    if any(w in ui for w in ["practice", "problem", "quiz", "exercise"]):
-        intent = "request_practice_problems"
-    elif any(w in ui for w in ["explain", "detail", "teach", "describe"]):
-        intent = "explanation"
-    elif any(w in ui for w in ["note", "summary", "summarize"]):
-        intent = "notes"
-    else:
-        intent = "request_practice_problems"
-
-    # Topic extraction after removing verbs
-    topic_candidate = ui
-    for verb in VERBS_TO_REMOVE_FROM_TOPIC:
-        pattern = f"{verb}\\s*"
-        topic_candidate = re.sub(pattern, "", topic_candidate)
-    topic_candidate = topic_candidate.strip()
-
-    # Use first two words (if any) or 'general'
-    words = topic_candidate.split()
-    topic = "_".join(words[:2]) if words else "general"
-
-    emotional_state = "neutral"
-    if any(w in ui for w in ["struggl", "frustrat", "confus", "hard"]):
-        emotional_state = "frustrated"
-    elif any(w in ui for w in ["confident", "know", "understand"]):
-        emotional_state = "confident"
-
-    return {
-        "intent": intent,
-        "topic": topic,
-        "emotional_state": emotional_state
-    }
+            
+            resp_text = response.choices[0].message.content.strip()
+            context = extract_last_json(resp_text)
+            print(f"DEBUG: LLM extracted: {context}")
+            return context
+            
+        except Exception as e:
+            print(f"LLM extraction failed: {e}")
+    
+    # Manual extraction fallback
+    context = manual_extraction(user_input)
+    print(f"DEBUG: Manual extracted: {context}")
+    return context

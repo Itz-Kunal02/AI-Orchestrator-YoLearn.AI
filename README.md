@@ -33,7 +33,7 @@ An intelligent, multi-tool orchestration system that transforms natural student 
 ## Quick Start
 1. Clone the repository:
    ```
-   git clone https://github.com/<your-org>/yolearn-ai-orchestrator.git
+   git clone https://github.com/Kunal02/yolearn-ai-orchestrator.git
    cd yolearn-ai-orchestrator
    ```
 
