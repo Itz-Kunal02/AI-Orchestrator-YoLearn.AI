@@ -1,112 +1,95 @@
-"""Enhanced parameter extraction with proper schema mapping"""
+# orchestrator/params.py
 
 from typing import Dict, Any, List, Optional, Tuple
-from .tools import pick_tool_from_intent, TOOL_SCHEMAS
+from .tools import pick_tool_from_intent
 from .models import UserInfo, ChatMessage
 
 def extract_tool_params(
-    intent: str, 
-    topic: str, 
-    emotion: str, 
-    user_info: Optional[Dict] = None, 
+    intent: str,
+    topic: str,
+    emotion: str,
+    user_info: Optional[Dict] = None,
     chat_history: Optional[List] = None
 ) -> Tuple[str, Dict[str, Any]]:
-    """Extract and configure parameters for selected tool with proper schema validation"""
-    
+    """Extract and configure parameters for selected tool"""
+
     # Select tool
     tool = pick_tool_from_intent(intent)
-    
-    # Create proper user_info object
+
+    # Build user_info
     if user_info:
         user_info_obj = UserInfo(**user_info)
     else:
-        # Create default user info with emotional adaptation
-        emotion_summary = f"Currently feeling {emotion}"
-        if emotion == "frustrated":
-            emotion_summary += " and needs encouragement"
-        elif emotion == "confident":
-            emotion_summary += " and ready for challenges"
-        
         user_info_obj = UserInfo(
-            user_id="demo_student",
+            user_id="student_demo",
             name="Demo Student",
             grade_level="10",
-            learning_style_summary="Prefers structured learning with examples",
-            emotional_state_summary=emotion_summary,
-            mastery_level_summary="Level 5: Developing competence"
+            learning_style_summary="Structured learner",
+            emotional_state_summary=f"Currently feeling {emotion}",
+            mastery_level_summary="Level 5: Developing"
         )
-    
-    # Convert chat history
-    chat_messages = []
+
+    # Convert chat history entries
+    chat_msgs = []
     if chat_history:
-        for msg in chat_history[-5:]:  # Last 5 messages
-            if isinstance(msg, dict):
-                chat_messages.append(ChatMessage(
-                    role="user",  # Simplified for demo
-                    content=msg.get("message", "")
-                ))
-    
-    # Get defaults and adapt based on emotion
-    defaults = TOOL_SCHEMAS.get(tool, {}).get("defaults", {})
-    
-    # Emotional intelligence adjustments
-    difficulty = defaults.get("difficulty", "medium")
+        for entry in chat_history[-5:]:
+            chat_msgs.append(ChatMessage(role=entry["role"], content=entry["message"]))
+
+    # Default settings
+    defaults = {
+        "quiz_generator": {"difficulty": "beginner", "question_type": "practice", "num_questions": 5},
+        "flashcard_generator": {"count": 5, "difficulty": "medium", "include_examples": True},
+        "note_maker": {"note_taking_style": "structured", "include_examples": True, "include_analogies": False},
+        "concept_explainer": {"desired_depth": "basic"}
+    }
+    tool_defaults = defaults.get(tool, {})
+
+    # Emotional adaptation
+    diff = tool_defaults.get("difficulty", "medium")
     if emotion in ["confused", "anxious", "frustrated"]:
-        difficulty = "easy"
+        diff = "easy"
     elif emotion == "confident":
-        difficulty = "hard"
-    
-    # Tool-specific parameter extraction
-    if tool == "note_maker":
+        diff = "hard"
+
+    # Build params per tool
+    if tool == "quiz_generator":
         params = {
             "user_info": user_info_obj.dict(),
-            "chat_history": [msg.dict() for msg in chat_messages],
             "topic": topic,
-            "subject": topic.split('_')[0] if '_' in topic else topic.split()[0] if topic else "general",
-            "note_taking_style": defaults.get("note_taking_style", "structured"),
-            "include_examples": defaults.get("include_examples", True),
-            "include_analogies": emotion in ["confused", "frustrated"]  # More analogies when struggling
+            "difficulty": diff,
+            "question_type": tool_defaults.get("question_type"),
+            "num_questions": tool_defaults.get("num_questions")
         }
-        
     elif tool == "flashcard_generator":
-        count = defaults.get("count", 5)
-        if emotion == "frustrated":
-            count = min(count, 3)  # Fewer cards when frustrated
-        elif emotion == "confident":
-            count = min(count + 2, 10)  # More cards when confident
-            
+        count = tool_defaults.get("count", 5)
         params = {
             "user_info": user_info_obj.dict(),
             "topic": topic,
             "count": count,
-            "difficulty": difficulty,
-            "subject": topic.split('_')[0] if '_' in topic else topic.split()[0] if topic else "general",
-            "include_examples": defaults.get("include_examples", True)
+            "difficulty": diff,
+            "subject": topic.split()[0],
+            "include_examples": tool_defaults.get("include_examples", True)
         }
-        
-    elif tool == "concept_explainer":
-        depth_mapping = {
-            "easy": "basic",
-            "medium": "intermediate", 
-            "hard": "advanced"
-        }
-        
+    elif tool == "note_maker":
         params = {
             "user_info": user_info_obj.dict(),
-            "chat_history": [msg.dict() for msg in chat_messages],
-            "concept_to_explain": topic,
-            "current_topic": topic.split('_')[0] if '_' in topic else topic.split()[0] if topic else "general",
-            "desired_depth": depth_mapping.get(difficulty, "basic")
-        }
-        
-    else:
-        # Fallback for quiz_generator (legacy)
-        params = {
+            "chat_history": [msg.dict() for msg in chat_msgs],
             "topic": topic,
-            "subject": topic.split('_')[0] if '_' in topic else topic.split()[0] if topic else "general",
-            "difficulty": difficulty,
-            "question_type": defaults.get("question_type", "practice"),
-            "num_questions": defaults.get("num_questions", 5)
+            "subject": topic.split()[0],
+            "note_taking_style": tool_defaults.get("note_taking_style"),
+            "include_examples": tool_defaults.get("include_examples", True),
+            "include_analogies": tool_defaults.get("include_analogies", False)
         }
-    
+    elif tool == "concept_explainer":
+        params = {
+            "user_info": user_info_obj.dict(),
+            "chat_history": [msg.dict() for msg in chat_msgs],
+            "concept_to_explain": topic,
+            "current_topic": topic.split()[0],
+            "desired_depth": tool_defaults.get("desired_depth", "basic")
+        }
+    else:
+        # Fallback
+        params = {"topic": topic}
+
     return tool, params
